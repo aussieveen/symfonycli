@@ -1,0 +1,7 @@
+/vendor
+composer.lock
+/var
+symfony.lock
+.DS_Store
+.idea
+.env.local
