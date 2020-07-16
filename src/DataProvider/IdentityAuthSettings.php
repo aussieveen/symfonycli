@@ -26,7 +26,8 @@ class IdentityAuthSettings implements AuthSettingsProviderInterface
      */
     private $identityClientSecret;
 
-    public const SCOPES = ['im-platform-reactions-api:all:manage'];
+//    public const SCOPES = ['im-platform-reactions-api:all:manage', 'WebUserAccountApi'];
+    public const SCOPES = ['WebUserAccountApi'];
 
     public function __construct(
         string $provider,

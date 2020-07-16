@@ -62,6 +62,7 @@ class ReactionsSync extends Command
                 $statusCode = 500;
                 continue;
             }
+            $output->
             $statusCode = $result->getStatusCode();
             printf("Attempt to update %s with %d ratings at offset %d\n", $service, $limit, $offset);
             echo($result->getBody()->getContents(). "\n");

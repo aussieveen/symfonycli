@@ -41,12 +41,17 @@ services:
         arguments:
             $provider: '%env(string:AUTH_SETTINGS_IDENTITY_PROVIDER)%'
             $identityBaseUrl: '%env(string:AUTH_SETTINGS_IDENTITY_BASE_URL)%'
-            $identityClientId: '%env(string:AUTH_SETTINGS_IDENTITY_CLIENT_ID)%'
-            $identityClientSecret: '%env(string:AUTH_SETTINGS_IDENTITY_CLIENT_SECRET)%'
+            $identityClientId: '%env(string:AUTH_SETTINGS_IDENTITY_CLIENT_ID_WEBUSER)%'
+            $identityClientSecret: '%env(string:AUTH_SETTINGS_IDENTITY_CLIENT_SECRET_WEBUSER)%'
 
     GuzzleHttp\Client:
 
     App\Command\ReactionsSync:
         arguments:
             $reactionsBaseUrl: '%env(string:REACTIONS_BASE_URL)%'
+            $authenticator: '@IM\Fabric\Package\Security\TokenGenerator\OAuth2\IdentityAuthenticator'
+
+    App\Command\CompetitionExtract:
+        arguments:
+            $identityBaseUrl: '%env(string:IDENTITY_ADMIN_BASE_URL)%'
             $authenticator: '@IM\Fabric\Package\Security\TokenGenerator\OAuth2\IdentityAuthenticator'
