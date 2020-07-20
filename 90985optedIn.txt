@@ -1,4 +1,0 @@
-competition id,email,given_name,family_name,address1,address2,postcode,city,county,phone_number
-90985,8f2a290d-06f4-4e73-a66a-2f3164a251d5,jmpft@aol.com,Jane,Palmer,Ashlea Cottage,Brimfield,SY8 4NP,Ludlow,,
-90985,7c8529c3-e91d-470a-88d7-5f0fd7d3d6d5,t.m.helsby@btinternet.com,maria,helsby,139 Hartington Road,,BN2 3PA,Brighton,,07906336612
-90985,a095ad2f-6831-46bb-b3d5-6026ac9ec3f2,barbara.paget1@gmail.com,Barbara,Paget,,,,,,
