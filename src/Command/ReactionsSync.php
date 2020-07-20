@@ -55,9 +55,10 @@ class ReactionsSync extends Command
         $service = $input->getArgument('service');
         $statusCode = 0;
         $limit = $input->getArgument('limit');
-        $offset = 0;
+        $offset = 2842;
         while($statusCode < 400){
-            $result = $this->client->get($this->reactionsBaseUrl . 'aggregateRating/push?limit='.$limit.'.&offset='.$offset.'&service='.$service, $this->authenticator);
+            $result = $this->client->get($this->reactionsBaseUrl . 'aggregateRating/push?limit='.$limit.'&offset='.$offset.'&service='.$service, $this->authenticator);
+            var_dump($result->getBody()->getContents());
             if (!$result instanceof ResponseInterface){
                 $statusCode = 500;
                 continue;
@@ -66,6 +67,7 @@ class ReactionsSync extends Command
             printf("Attempt to update %s with %d ratings at offset %d\n", $service, $limit, $offset);
             echo($result->getBody()->getContents(). "\n");
             $offset += $limit;
+            $statusCode = 500;
         }
         return 1;
 
