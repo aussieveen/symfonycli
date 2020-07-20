@@ -49,6 +49,7 @@ class CompetitionExtract extends Command
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
+        $start = microtime(true);
         $path = './' . $input->getArgument('directory') . '/';
 
         $files = scandir($path);
@@ -83,23 +84,40 @@ class CompetitionExtract extends Command
             $correct = implode("\n", $correct);
             file_put_contents($id . 'correct.txt', $correct);
 
-            
-            $result = $this->client->get($this->identityBaseUrl . '/WebUserAccountApi/users/usersinfo?userIds=' . implode(',', $optedin), $this->authenticator);
 
-            if ($result === null){
-                continue;
+            $lastBlock = false;
+            $optedInWithDetails = [];
+            $offset = 0;
+            $length = 30;
+            while (!$lastBlock){
+                $block = array_slice($optedin, $offset, $length);
+                if(count($block) < $length){
+                    $lastBlock = true;
+                }
+
+                if (empty($block)){
+                    continue;
+                }
+
+                $offset += $length;
+
+                $result = $this->client->get($this->identityBaseUrl . '/WebUserAccountApi/users/usersinfo?userIds=' . implode(',', $block), $this->authenticator);
+
+                if ($result === null){
+                    continue;
+                }
+
+                $results = json_decode($result->getBody()->getContents(), true);
+                $optedInWithDetails[] = 'competition id,email,given_name,family_name,address1,address2,postcode,city,county,phone_number';
+                foreach($results['result']['users'] as $user){
+                    $optedInWithDetails[] = implode(',', array_merge([$id], $this->getUserDetails($user)));
+                }
             }
-
-            $results = json_decode($result->getBody()->getContents(), true);
-            $optedInWithDetails[] = 'competition id,email,given_name,family_name,address1,address2,postcode,city,county,phone_number';
-            foreach($results['result']['users'] as $user){
-                $optedInWithDetails[] = implode(',', array_merge([$id], $this->getUserDetails($user)));
-            }
-
             $optedInWithDetails = implode("\n", $optedInWithDetails);
             file_put_contents($id . 'optedIn.txt', $optedInWithDetails);
 
         }
+        echo "\nseconds elapsed: " . (microtime(true) - $start);
         return 1;
     }
 
