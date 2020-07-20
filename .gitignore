@@ -14,5 +14,5 @@ symfony.lock
 /var/
 /vendor/
 /extracts/
-.txt
+*.txt
 ###< symfony/framework-bundle ###
