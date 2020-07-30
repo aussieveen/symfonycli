@@ -8,7 +8,9 @@ use IM\Fabric\Package\Security\TokenGenerator\AuthenticatorInterface;
 use League\Flysystem\Filesystem;
 use Psr\Http\Message\ResponseInterface;
 use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
+use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
 
 class ContentDuplication extends Command
@@ -20,6 +22,8 @@ class ContentDuplication extends Command
     private const REPORT_DIR = 'reports';
 
     private const URL = 'v1/recipes.jsonld?client=bbcgoodfood&limit=100&page=';
+
+    private const HIGH_PRIORITY = ['endSummary', 'ingredients', 'method', 'description'];
 
     /**
      * @var string
@@ -60,19 +64,53 @@ class ContentDuplication extends Command
     protected function configure(): void
     {
         $this->setDescription('Duplication check')
-            ->setHelp('Command for scanning the content api looking for entries with duplicated fields');
+            ->setHelp('Command for scanning the content api looking for entries with duplicated fields')
+            ->addOption(
+                'rawfile',
+                'r',
+                InputOption::VALUE_OPTIONAL,
+                'The file you wish to analyse'
+            );
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
-        $filename = 'Report ' . date('Y-m-d H:i:s');
+        $filenameBase = 'Report ' . date('Y-m-d H:i:s');
 
+        $rawFile = $input->getOption('rawfile');
+
+        if (!$rawFile) {
+            $rawFile = $filenameBase . 'raw';
+
+            $this->generateRaw($rawFile);
+        }
+
+        $filenameAnalysis = $filenameBase . ' analysis';
+        $this->runAnalysis($rawFile, $filenameAnalysis);
+
+        return 1;
+    }
+
+    private function clearOutIds(array $data): array
+    {
+        unset($data['@id'], $data['id']);
+        foreach ($data as $key => $value) {
+            if (is_array($value)) {
+                $data[$key] = $this->clearOutIds($value);
+            }
+        }
+        return $data;
+    }
+
+    private function generateRaw($filename): void
+    {
         $this->createFile($filename);
 
         $page = 1;
-        $lastPage = 4000000;
+        $lastPage = 1;
 
         while ($page <= $lastPage) {
+            print_r($page . " of " . $lastPage . PHP_EOL);
             $result = $this->client->get($this->contentBaseUrl . self::URL . $page, $this->authenticator);
 
             if (!$result instanceof ResponseInterface) {
@@ -87,7 +125,6 @@ class ContentDuplication extends Command
 
             if ($page === 1) {
                 $lastPage = preg_match('/(?<=page=)([\d]+)/', $responseBody['hydra:view']['hydra:last'])[0];
-                $lastPage = 2;
             }
 
             $recipes = $this->clearOutIds($responseBody['hydra:member']);
@@ -116,20 +153,28 @@ class ContentDuplication extends Command
 
             $page++;
         }
-
-        return 1;
     }
 
-    private function clearOutIds(array $data): array
+    private function runAnalysis(string $rawFile, string $analysisFile): void
     {
-        unset($data['@id'], $data['id']);
-        foreach ($data as $key => $value) {
-            if (is_array($value)) {
-                $data[$key] = $this->clearOutIds($value);
+        $this->createFile($analysisFile);
+
+        $file = $this->filesystem->get(self::REPORT_DIR . '/' . $rawFile);
+        $fileContents = json_decode($file->read(), true);
+
+        $output['total'] = 'Total recipes with errors: ' . count($fileContents);
+
+        foreach ($fileContents as $clientId => $attributes) {
+            if (array_intersect($attributes, self::HIGH_PRIORITY)) {
+                $output['priority:high'][$clientId] = $attributes;
+                continue;
             }
+            $output['priority:low'][$clientId] = $attributes;
         }
-        return $data;
+
+        $this->filesystem->put(self::REPORT_DIR . '/' . $analysisFile, json_encode($output, JSON_PRETTY_PRINT));
     }
+
 
     private function createFile(string $filename): void
     {
