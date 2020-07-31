@@ -8,6 +8,7 @@ use IM\Fabric\Package\Security\TokenGenerator\AuthenticatorInterface;
 use League\Flysystem\Filesystem;
 use Psr\Http\Message\ResponseInterface;
 use Symfony\Component\Console\Command\Command;
+use Symfony\Component\Console\Helper\ProgressBar;
 use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
@@ -80,9 +81,9 @@ class ContentDuplication extends Command
         $rawFile = $input->getOption('rawfile');
 
         if (!$rawFile) {
-            $rawFile = $filenameBase . 'raw';
+            $rawFile = $filenameBase . ' raw';
 
-            $this->generateRaw($rawFile);
+            $this->generateRaw($rawFile, $output);
         }
 
         $filenameAnalysis = $filenameBase . ' analysis';
@@ -102,15 +103,16 @@ class ContentDuplication extends Command
         return $data;
     }
 
-    private function generateRaw($filename): void
+    private function generateRaw($filename, $output): void
     {
+        $progressBar = new ProgressBar($output);
+
         $this->createFile($filename);
 
         $page = 1;
         $lastPage = 1;
 
         while ($page <= $lastPage) {
-            print_r($page . " of " . $lastPage . PHP_EOL);
             $result = $this->client->get($this->contentBaseUrl . self::URL . $page, $this->authenticator);
 
             if (!$result instanceof ResponseInterface) {
@@ -124,7 +126,11 @@ class ContentDuplication extends Command
             }
 
             if ($page === 1) {
-                $lastPage = preg_match('/(?<=page=)([\d]+)/', $responseBody['hydra:view']['hydra:last'])[0];
+                preg_match('/(?<=page=)([\d]+)/', $responseBody['hydra:view']['hydra:last'], $matches);
+                $lastPage = $matches[0];
+
+                $progressBar->setMaxSteps($lastPage);
+                $progressBar->start();
             }
 
             $recipes = $this->clearOutIds($responseBody['hydra:member']);
@@ -152,7 +158,10 @@ class ContentDuplication extends Command
             $this->updateFile($filename, $errors);
 
             $page++;
+            $progressBar->advance();
         }
+
+        $progressBar->finish();
     }
 
     private function runAnalysis(string $rawFile, string $analysisFile): void
@@ -163,6 +172,8 @@ class ContentDuplication extends Command
         $fileContents = json_decode($file->read(), true);
 
         $output['total'] = 'Total recipes with errors: ' . count($fileContents);
+        $output['total:priority:high'] = 0;
+        $output['total:priority:low'] = 0;
 
         foreach ($fileContents as $clientId => $attributes) {
             if (array_intersect($attributes, self::HIGH_PRIORITY)) {
@@ -171,6 +182,9 @@ class ContentDuplication extends Command
             }
             $output['priority:low'][$clientId] = $attributes;
         }
+
+        $output['total:priority:high'] = count($output['priority:high']);
+        $output['total:priority:low'] = count($output['priority:low']);
 
         $this->filesystem->put(self::REPORT_DIR . '/' . $analysisFile, json_encode($output, JSON_PRETTY_PRINT));
     }
