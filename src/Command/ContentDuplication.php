@@ -3,26 +3,36 @@
 namespace App\Command;
 
 use App\Client\GuzzleClient;
-use App\Duplication\DuplicationCheckerInterface;
+use Exception;
 use IM\Fabric\Package\Security\TokenGenerator\AuthenticatorInterface;
 use League\Flysystem\Filesystem;
 use Psr\Http\Message\ResponseInterface;
 use Symfony\Component\Console\Command\Command;
-use Symfony\Component\Console\Helper\ProgressBar;
-use Symfony\Component\Console\Input\InputArgument;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Input\InputOption;
 use Symfony\Component\Console\Output\OutputInterface;
+use Symfony\Component\Console\Style\SymfonyStyle;
 
 class ContentDuplication extends Command
 {
     protected static $defaultName = 'content:duplication';
 
-    private const ALLOWED = ['time', 'meta', 'settings', 'card', 'userRatings', 'author', 'sponsor', 'servings'];
+    private const ALLOWED = ['time', 'meta', 'settings', 'card', 'userRatings', 'author', 'sponsor', 'servings', 'primaryCategory'];
+
+    private const SUPPORTED_POST_ENDPOINTS_WITH_LIMITS = [
+        'editorial_lists' => '10',
+        'glossaries' => '100',
+        'how_tos' => '100',
+        'plants' => '100',
+        'posts' => '100',
+        'recipes' => '100',
+        'reviews' => '100',
+        'venues' => '100'
+    ];
 
     private const REPORT_DIR = 'reports';
 
-    private const URL = 'v1/recipes.jsonld?client=bbcgoodfood&limit=100&page=';
+    private const URL_FORMAT = '%sv1/%s.jsonld?client=bbcgoodfood&limit=%d&page=%d';
 
     private const HIGH_PRIORITY = ['endSummary', 'ingredients', 'method', 'description'];
 
@@ -40,8 +50,6 @@ class ContentDuplication extends Command
      * @var AuthenticatorInterface
      */
     private $authenticator;
-
-    private const TEST_FILE_PATH = __DIR__ . '/../../tests/assets/Duplication/';
 
     /**
      * @var Filesystem
@@ -71,11 +79,31 @@ class ContentDuplication extends Command
                 'r',
                 InputOption::VALUE_OPTIONAL,
                 'The file you wish to analyse'
+            )
+            ->addOption(
+                'types',
+                't',
+                InputOption::VALUE_OPTIONAL,
+                'The post types you wish to scan'
             );
     }
 
     protected function execute(InputInterface $input, OutputInterface $output): int
     {
+        $io = new SymfonyStyle($input, $output);
+
+        $endpoints = $input->getOption('types') ?
+            array_intersect(
+                array_keys(self::SUPPORTED_POST_ENDPOINTS_WITH_LIMITS),
+                explode(',',$input->getOption('types'))
+            ) :
+            array_keys(self::SUPPORTED_POST_ENDPOINTS_WITH_LIMITS);
+
+        if (empty($endpoints)){
+            $io->error('You have passed through an invalid entity type');
+            return 0;
+        }
+
         $filenameBase = 'Report ' . date('Y-m-d H:i:s');
 
         $rawFile = $input->getOption('rawfile');
@@ -83,7 +111,7 @@ class ContentDuplication extends Command
         if (!$rawFile) {
             $rawFile = $filenameBase . ' raw';
 
-            $this->generateRaw($rawFile, $output);
+            $this->generateRaw($rawFile, $io, $endpoints);
         }
 
         $filenameAnalysis = $filenameBase . ' analysis';
@@ -103,65 +131,83 @@ class ContentDuplication extends Command
         return $data;
     }
 
-    private function generateRaw($filename, $output): void
+    private function generateRaw($filename, SymfonyStyle $io, $endpoints): void
     {
-        $progressBar = new ProgressBar($output);
-
         $this->createFile($filename);
 
-        $page = 1;
-        $lastPage = 1;
+        foreach($endpoints as $endpoint) {
+            $io->text ('Processing endpoint: ' . $endpoint);
 
-        while ($page <= $lastPage) {
-            $result = $this->client->get($this->contentBaseUrl . self::URL . $page, $this->authenticator);
+            $page = 1;
+            $lastPage = 1;
 
-            if (!$result instanceof ResponseInterface) {
-                continue;
-            }
+            while ($page <= $lastPage) {
+                $result = $this->client->get(
+                    sprintf(
+                        self::URL_FORMAT,
+                        $this->contentBaseUrl,
+                        $endpoint,
+                        self::SUPPORTED_POST_ENDPOINTS_WITH_LIMITS[$endpoint],
+                        $page
+                    ),
+                    $this->authenticator);
 
-            $responseBody = json_decode($result->getBody()->getContents(), true);
+                if (!$result instanceof ResponseInterface) {
+                    continue;
+                }
 
-            if (empty($responseBody['hydra:member'])) {
-                break;
-            }
+                $responseBody = json_decode($result->getBody()->getContents(), true);
 
-            if ($page === 1) {
-                preg_match('/(?<=page=)([\d]+)/', $responseBody['hydra:view']['hydra:last'], $matches);
-                $lastPage = $matches[0];
+                if (empty($responseBody['hydra:member'])) {
+                    break;
+                }
 
-                $progressBar->setMaxSteps($lastPage);
-                $progressBar->start();
-            }
-
-            $recipes = $this->clearOutIds($responseBody['hydra:member']);
-
-            $errors = [];
-            foreach ($recipes as $recipe) {
-                foreach ($recipe as $attribute => $value) {
-                    if (in_array($attribute, self::ALLOWED) || !is_array($value)) {
-                        continue;
+                if ($page === 1) {
+                    $lastPage = 1;
+                    if (isset($responseBody['hydra:view']['hydra:last'])) {
+                        preg_match('/(?<=page=)([\d]+)/', $responseBody['hydra:view']['hydra:last'], $matches);
+                        $lastPage = $matches[0];
+                        $lastPage = 2;
                     }
+                    $io->progressStart($lastPage);
+                }
 
-                    foreach ($value as $key => $item) {
-                        $duplicates = array_filter($value, function ($element) use ($item) {
-                            return $item == $element;
-                        });
+                $documents = $this->clearOutIds($responseBody['hydra:member']);
 
-                        if (count($duplicates) > 1) {
-                            $errors[$recipe['clientId']][] = $attribute;
-                            break;
+                $errors = [];
+                foreach ($documents as $document) {
+                    foreach ($document as $attribute => $value) {
+                        if (in_array($attribute, self::ALLOWED) || !is_array($value)) {
+                            continue;
+                        }
+
+                        foreach ($value as $key => $item) {
+                            $duplicates = array_filter($value, function ($element) use ($item) {
+                                return $item == $element;
+                            });
+
+                            if (count($duplicates) > 1) {
+                                $errors[$document['clientId']]['attributes'][] = $attribute;
+                                $errors[$document['clientId']]['endpoint'] = $endpoint;
+                                break;
+                            }
                         }
                     }
                 }
+
+                $this->updateFile($filename, $errors);
+
+                $page++;
+
+                $io->progressAdvance();
             }
 
-            $this->updateFile($filename, $errors);
+            try {
+                $io->progressFinish();
+            }catch (Exception $e){
 
-            $page++;
-            $progressBar->advance();
+            }
         }
-
-        $progressBar->finish();
     }
 
     private function runAnalysis(string $rawFile, string $analysisFile): void
@@ -171,20 +217,28 @@ class ContentDuplication extends Command
         $file = $this->filesystem->get(self::REPORT_DIR . '/' . $rawFile);
         $fileContents = json_decode($file->read(), true);
 
-        $output['total'] = 'Total recipes with errors: ' . count($fileContents);
-        $output['total:priority:high'] = 0;
-        $output['total:priority:low'] = 0;
+        $output['aggregate']['total'] = count($fileContents);
 
-        foreach ($fileContents as $clientId => $attributes) {
-            if (array_intersect($attributes, self::HIGH_PRIORITY)) {
-                $output['priority:high'][$clientId] = $attributes;
+        $highPriorityCount = 0;
+        $lowPriorityCount = 0;
+        $typeCount = [];
+
+        foreach ($fileContents as $clientId => $details) {
+            foreach($details['attributes'] as $attribute){
+                $typeCount[$attribute] = ($typeCount[$attribute] ?? 0) + 1;
+            }
+            if (array_intersect($details['attributes'], self::HIGH_PRIORITY)) {
+                $output['priority:high'][$details['entity']][$clientId] = $details['attributes'];
+                $highPriorityCount++;
                 continue;
             }
-            $output['priority:low'][$clientId] = $attributes;
+            $output['priority:low'][$details['endpoint']][$clientId] = $details['attributes'];
+            $lowPriorityCount++;
         }
 
-        $output['total:priority:high'] = count($output['priority:high']);
-        $output['total:priority:low'] = count($output['priority:low']);
+        $output['aggregate']['high'] = $highPriorityCount;
+        $output['aggregate']['low'] = $lowPriorityCount;
+        $output['aggregate']['attributes'] = $typeCount;
 
         $this->filesystem->put(self::REPORT_DIR . '/' . $analysisFile, json_encode($output, JSON_PRETTY_PRINT));
     }
