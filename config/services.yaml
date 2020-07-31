@@ -17,6 +17,15 @@ services:
         resource: '../src/*'
         exclude: '../src/{DependencyInjection,Entity,Migrations,Tests,Kernel.php}'
 
+    # controllers are imported separately to make sure services can be injected
+    # as action arguments even if you don't extend any base controller class
+#    App\Controller\:
+#        resource: '../src/Controller'
+#        tags: ['controller.service_arguments']
+
+    # add more service definitions when explicit configuration is needed
+    # please note that last definitions always *replace* previous ones
+
     IM\Fabric\Package\Security\TokenGenerator\:
         resource: '../vendor/immediate/im-auth-token-generator/src/*'
 
@@ -36,3 +45,24 @@ services:
         arguments:
             $reactionsBaseUrl: '%env(string:REACTIONS_BASE_URL)%'
             $authenticator: '@IM\Fabric\Package\Security\TokenGenerator\OAuth2\IdentityAuthenticator'
+
+
+    App\Command\ContentDuplication:
+        arguments:
+            $contentBaseUrl: '%env(string:CONTENT_BASE_URL)%'
+            $authenticator: '@IM\Fabric\Package\Security\TokenGenerator\OAuth2\IdentityAuthenticator'
+
+    League\Flysystem\Adapter\Local:
+        arguments:
+            - './'
+            - false
+            - 'League\Flysystem\Adapter\Local::SKIP_LINKS'
+
+    League\Flysystem\Plugin\ListPaths:
+
+    League\Flysystem\Filesystem:
+        arguments:
+           - '@League\Flysystem\Adapter\Local'
+        calls:
+           - [addPlugin, ['@League\Flysystem\Plugin\ListPaths']]
+
